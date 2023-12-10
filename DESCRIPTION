@@ -15,3 +15,5 @@ Suggests: knitr, rmarkdown, dplyr, ggpubr, latex2exp, VGAM, bootstrap, boot, DAA
 VignetteBuilder: knitr
 URL: http://github.com/SA23204158/SA23204158
 BugReports: http://github.com/SA23204158/SA23204158/issues
+
+
