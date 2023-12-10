@@ -13,5 +13,5 @@ RoxygenNote: 7.2.3
 Encoding: UTF-8
 Suggests: knitr, rmarkdown, dplyr, ggpubr, latex2exp, VGAM, bootstrap, boot, DAAG, microbenchmark
 VignetteBuilder: knitr
-URL: http://github.com/fengzekang/SA23204158
-BugReports: http://github.com/fengzekang/SA23204158/issues
+URL: http://github.com/SA23204158/SA23204158
+BugReports: http://github.com/SA23204158/SA23204158/issues
