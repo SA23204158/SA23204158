@@ -1,0 +1,302 @@
+---
+title: "Introduction to R-package"
+author: "Zekang Feng"
+date: "2023-12-9"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to R-package}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+packages:
+  - Rcpp
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Application background and algorithm flow of R package
+
+Suppose we now have three experiments to measure the lifetimes of $m$,
+$n$, and $k$ bulbs, respectively. In the first trial, the specific
+lifetimes of $n$ bulbs are measured, and the life value is
+$y_1, ..., y_n$. In the second experiment, only it is known whether $m$
+bulbs can still be lit at a fixed time $s > 0$, if they are lit, then we
+obtain that $E_i=1$, if they cannot be lit, then $E_i=0$. In the third
+experiment, we can get the range of the lifetime of $k$ bulbs, i.e.,
+$(u_i, v_i), i = 1, 2, ..., k$, where $u_i<v_i$ are two non-random known
+constants.
+
+It is assumed that the lifetime of the bulb obeys an exponential
+distribution with a mean of $1/\lambda$, now we calculate the maximum
+likelihood estimation of parameter $\lambda$ by the E-M algorithm.
+
+For $x_1, x_2, ...,x_n \sim Exp(\lambda)$, we have $$
+f(x_i) = \left\{
+             \begin{array}{lr}
+             \lambda e^{-\lambda x_i} &,x_i>0  \\
+             0 &,x_i\le0  
+             \end{array}
+\right.
+$$ $$
+F(x_i) = \left\{
+             \begin{array}{lr}
+             1 -  e^{-\lambda x_i} &,x_i>0  \\
+             0 &,x_i\le0  
+             \end{array}
+\right.
+$$
+
+Firstly, we fill in the lifetime of all the bulbs in the second and
+third experiments. Note that $E_i = 1$ means that in the second
+experiment, the $i$-th bulb can still be lit at time $s$, otherwise
+$E_i = 0, i=1....m$, then the observed data is
+$\mathbf{Y} = (E_1, ..., E_m, Y_1, ..., Y_n, U_1, ..., U_k, V_1, ..., V_k)$,
+the missing data is $\mathbf{X} = (x_1, ..., x_m, z_1, ...,z_m)$, where
+$x_i$ is the lifetime of the bulb in the second trial, and $z_i$ is the
+lifetime of the bulb in the third trial. Consider the prior distribution
+as $\frac{1}{]lambda}$, so the likelihood function under the complete
+data is $$
+l_c(\lambda|\mathbf{X})  = (m+n+k-1) \ln \lambda - \lambda (\sum_{i=1}^{m}x_i + \sum_{i=1}^{n}y_i + \sum_{i=k}^{n}z_i)
+$$
+
+E-step: $$
+Q(\lambda | \hat{\lambda}^{(j)}) = E[l_c(\lambda|\mathbf{X}) |\mathbf{Y},\hat{\lambda}^{(r)}]
+= (m+n+k-1) \ln \lambda - \lambda (\sum_{i=1}^{m}E(x_i|e_i) + \sum_{i=1}^{n}y_i + \sum_{i=k}^{n}E(z_i|u_i, v_i)). 
+$$
+
+M-step: $$
+\frac{\partial Q(\lambda | \hat{\lambda}^{(j)})}{\partial \lambda} =  \frac{m+n+k-1}{\lambda} - (\sum_{i=1}^{m}E(x_i|e_i) + \sum_{i=1}^{n}y_i + \sum_{i=k}^{n}E(z_i|u_i, v_i)) = 0.
+$$
+
+From the memorability and full probability formulas of exponential
+distributions, we can finally simplify it as $$
+\hat{\lambda}^{(j+1)} = \frac{m+n+k-1}{n \bar y + (m-r)(s + \frac{1}{ \hat{\lambda}^{(j)}} 
++ r(  \frac{1}{ \hat{\lambda}^{(j)}}  - \frac{te^{-\hat{\lambda}^{(j)} t}}{1-e^{-\hat{\lambda}^{(j)} t}})
++ \frac{k}{\hat{\lambda}^{(j)}} + \sum_{i=1}^{k} \frac{u_i e^{-\hat{\lambda}^{(j)} u_i} - v_i e^{-\hat{\lambda}^{(j)} v_i}}{e^{-\hat{\lambda}^{(j)} u_i} - v_i e^{-\hat{\lambda}^{(j)} v_i }}} 
+$$
+
+R function:
+
+```{r}
+EM <- function(x, s, y, u, v, lambda0 = 0.1, max.it = 1e4, tol = 1e-6){
+  m <- length(x)
+  r <- m - sum(x)
+  n <- length(y)
+  k <- length(u)
+  lambda <- numeric(length = max.it)
+  lambda[1] <- lambda0
+  
+  for (i in 2:max.it) {
+    n1 <- m + n + k - 1
+    n2 <- s * exp(-s * lambda[i - 1])
+    d2 <- 1 - exp(-s * lambda[i - 1])
+    n3 <- (u * exp(-lambda[i - 1] * u) - v * exp(-lambda[i - 1] * v))
+    d3 <- exp(-lambda[i - 1] * u) - exp(-lambda[i - 1] * v)
+    d1 <- n * mean(y) + (m - r) * (s + 1 / lambda[i - 1]) + r * (1 / lambda[i - 1] - n2 / d2) + k / lambda[i - 1] + sum(n3 / d3)
+    lambda[i] <- n1 / d1
+    
+    # Check convergence
+    if (abs(lambda[i] - lambda[i - 1]) < tol) {
+      return(list(lambda = lambda[i], iteration = i))
+    }
+  }
+  
+  # If convergence criteria are not met, return the result at the maximum iteration
+  return(list(lambda = lambda[max.it], iteration = max.it))
+}
+```
+
+Rcpp function:
+
+```{r}
+library(Rcpp)
+cppFunction('
+#include <Rcpp.h>
+using namespace Rcpp;
+
+// C++ implementation of the EM function
+// [[Rcpp::export]]
+List EMcpp(NumericVector x, double s, NumericVector y, NumericVector u, NumericVector v,
+           double lambda0 = 0.1, int max_it = 1e4, double tol = 1e-6) {
+  
+  int m = x.length();
+  int r = m - sum(x);
+  int n = y.length();
+  int k = u.length();
+  
+  NumericVector lambda(max_it);
+  lambda[0] = lambda0;
+  
+  for (int i = 1; i < max_it; i++) {
+    double n1 = m + n + k - 1;
+    double n2 = s * exp(-s * lambda[i - 1]);
+    double d2 = 1 - exp(-s * lambda[i - 1]);
+    
+    NumericVector n3 = (u * exp(-lambda[i - 1] * u) - v * exp(-lambda[i - 1] * v));
+    NumericVector d3 = exp(-lambda[i - 1] * u) - exp(-lambda[i - 1] * v);
+    
+    double d1 = n * mean(y) + (m - r) * (s + 1 / lambda[i - 1]) + r * (1 / lambda[i - 1] - n2 / d2) + k / lambda[i - 1] + sum(n3 / d3);
+    lambda[i] = n1 / d1;
+  
+  // Check convergence
+  if (std::abs(lambda[i] - lambda[i - 1]) < tol) {
+    return Rcpp::List::create(Rcpp::Named("lambda") = lambda[i], Rcpp::Named("iteration") = i + 1);
+  }
+  }
+  
+  // If convergence criteria are not met, return the result at the maximum iteration
+  return Rcpp::List::create(Rcpp::Named("lambda") = lambda[max_it - 1], Rcpp::Named("iteration") = max_it);
+}
+')
+```
+
+Secondly, Based on the above obtained parameter $\lambda$, we make up
+for the censored values in the second and third experiments based on the
+posterior expectation estimate.
+
+R function:
+
+```{r}
+Supvalue <- function(x, s, y, u, v, lambda){
+  m <- length(x)
+  r <- m - sum(x)
+  n <- length(y)
+  k <- length(u)
+  Y <- numeric(m + n + k)
+  u1 <- runif(r ,0 , 1)
+  u2 <- runif(m-r,0 , 1)
+  for (i in 1:r) {
+    Y[i] <- -1/lambda * log(1 - u1[i]*(1 - exp(-lambda*s)))
+  }
+  for (i in 1:(m-r)) {
+    Y[r + i] <- s - log(u2[i]) / lambda
+  }
+  for (i in 1:n) {
+    Y[m + i] <- y[i]
+  }
+  for (i in 1:k) {
+    Y[m + n + i] <- ((u[i] + 1/lambda)*exp(-lambda*u[i]) - (v[i] + 1/lambda)*exp(-lambda*v[i])) / (exp(-lambda*u[i]) - exp(-lambda*v[i]))
+  }
+  return(Y)
+}
+```
+
+Rcpp function:
+
+```{r}
+library(Rcpp)
+cppFunction('
+#include <Rcpp.h>
+using namespace Rcpp;
+
+// C++ implementation of the Supvalue function
+// [[Rcpp::export]]
+NumericVector Supvaluecpp(NumericVector x, double s, NumericVector y, NumericVector u, NumericVector v, double lambda) {
+  
+  int m = x.length();
+  int r = m - sum(x);
+  int n = y.length();
+  int k = u.length();
+  
+  NumericVector Y(m + n + k);
+  
+  NumericVector u1 = runif(r, 0, 1);
+  NumericVector u2 = runif(m - r, 0, 1);
+  
+  for (int i = 0; i < r; i++) {
+    Y[i] = -1 / lambda * log(1 - u1[i] * (1 - exp(-lambda * s)));
+  }
+  
+  for (int i = 0; i < (m - r); i++) {
+    Y[r + i] = s - log(u2[i]) / lambda;
+  }
+  
+  for (int i = 0; i < n; i++) {
+    Y[m + i] = y[i];
+  }
+  
+  for (int i = 0; i < k; i++) {
+    Y[m + n + i] = ((u[i] + 1 / lambda) * exp(-lambda * u[i]) - (v[i] + 1 / lambda) * exp(-lambda * v[i])) / (exp(-lambda * u[i]) - exp(-lambda * v[i]));
+  }
+  
+  return Y;
+}
+')
+```
+
+Finally, based on the complete survival data, we calculated the
+expectation and variance of the maximum likelihood estimate for
+parameter $\lambda$ based on the bootstrap method, respectively.
+
+R function:
+
+```{r}
+Bootstrap <- function(x,B,alpha=0.05){
+  lambdahat <-  1 / mean(x)
+  lambdastar <- numeric(B)
+  for(b in 1:B){
+    xstar <- sample(x,replace=TRUE)
+    lambdastar[b] <- 1 / mean(xstar)
+  }
+  mean.boot <- mean(lambdastar)
+  bias.boot <- mean(lambdastar) - lambdahat
+  se.boot   <- sd(lambdastar)
+  
+  normal.CI1 <- lambdahat - qnorm(1-0.5*alpha)*se.boot
+  normal.CI2 <- lambdahat + qnorm(1-0.5*alpha)*se.boot
+  basic.CI1 <- 2*lambdahat - unname(quantile(lambdastar, 1-0.5*alpha))
+  basic.CI2 <- 2*lambdahat - unname(quantile(lambdastar, 0.5*alpha))
+  percentile.CI1 <- unname(quantile(lambdastar, 0.5*alpha))
+  percentile.CI2 <- unname(quantile(lambdastar, 1-0.5*alpha))
+  
+  
+  return(c(list(mean.boot = mean.boot, se.boot = se.boot, bias.boot=bias.boot), 
+           list(normal.CI1=normal.CI1,normal.CI2=normal.CI2), 
+           list(basic.CI1=basic.CI1,basic.CI2=basic.CI2),
+           list(percentile.CI1=percentile.CI1,percentile.CI2=percentile.CI2)))
+}
+```
+
+# How to use the R package function
+
+EX1:
+
+```{r}
+set.seed(178566)
+n <- m <- k <- 1e3
+s <- 80
+x <- sum(rexp(n, rate = 1 / 80) < s)
+y <- rexp(m, rate = 1 / 80)
+z <- rexp(k, rate = 1 / 80)
+u <- z - runif(k, 0, 1)
+v <- z + runif(k, 0, 10)
+
+result1 <- EM(x, s, y, u, v, max.it = 1e4, tol = 1e-6)
+result2 <- EMcpp(x, s, y, u, v)
+```
+
+EX2:
+
+```{r}
+set.seed(178566)
+n <- m <- k <- 1e5
+s <- 80
+x <- as.numeric(rexp(n, rate = 1 / 80) <= s)
+y <- as.numeric(rexp(m, rate = 1 / 80))
+z <- as.numeric(rexp(k, rate = 1 / 80))
+u <- z - runif(k, 0, 1)
+v <- z + runif(k, 0, 1)
+lambda <- 1 / 80
+
+Y1 <- Supvalue(x, s, y, u, v, lambda)
+Y2 <- Supvaluecpp(x, s, y, u, v, lambda)
+```
+
+EX3:
+
+```{r}
+x <- c(3, 5, 7, 18, 43, 85, 91, 98, 100, 130, 230, 487)
+B <- 1e5
+      
+result1 <- Bootstrap(x,B,alpha=0.05)
+```
